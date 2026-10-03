@@ -56,6 +56,9 @@ var replay_playing := false
 var replay_t := 0.0
 var replay_speed := 1.0
 var replay_return_overlay := false   # 看完回通关浮层而不是继续玩
+var export_btn: Button
+var video_exporting := false
+const VIDEO_FPS := 30
 
 var menu_scrim: ColorRect
 var _bb_menu: BackBufferCopy
@@ -353,6 +356,9 @@ func _build_ui() -> void:
 	replay_info.add_theme_color_override("font_color", UITheme.C_TEXT_DIM)
 	replay_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rhead.add_child(replay_info)
+	export_btn = _mk_mini("导出视频", func(): export_replay_video())
+	export_btn.add_theme_color_override("font_color", UITheme.C_ACCENT_SOFT)
+	rhead.add_child(export_btn)
 	rhead.add_child(_mk_mini("关闭", func(): close_replay()))
 	var rrow := HBoxContainer.new()
 	rrow.add_theme_constant_override("separation", 6)
@@ -658,6 +664,102 @@ func close_replay() -> void:
 		world.reset_ball()
 	refresh_pause()
 
+## 导出目录：优先「视频」文件夹，退而求其次桌面，再不行就 user://
+func _video_dir() -> String:
+	# Godot 4.7 的 OS.SystemDir 里没有 VIDEOS，就自己拼用户目录
+	var home := OS.get_environment("USERPROFILE")
+	if home == "":
+		home = OS.get_environment("HOME")
+	var candidates: Array = []
+	if home != "":
+		candidates.append(home.path_join("Videos"))
+	candidates.append(OS.get_system_dir(OS.SYSTEM_DIR_DESKTOP))
+	for d in candidates:
+		if d != "" and DirAccess.dir_exists_absolute(d):
+			return d
+	return ProjectSettings.globalize_path("user://")
+
+## 把当前复盘逐帧渲染出来，编成一个 MJPEG 的 .avi
+func export_replay_video() -> void:
+	if video_exporting:
+		return
+	var dur: float = world.rec_duration()
+	if dur < 0.2:
+		show_toast("这段录像太短，没什么可导出的")
+		return
+	video_exporting = true
+	replay_playing = false
+	export_btn.disabled = true
+	var total := maxi(1, int(round(dur * float(VIDEO_FPS))))
+	var out_dir := _video_dir()
+	var stamp := Time.get_datetime_string_from_system(false, true)
+	stamp = stamp.replace("-", "").replace(":", "").replace("T", "-").replace(" ", "-")
+	var path := out_dir.path_join("BallJump-replay-%s.avi" % stamp)
+	var avi := AviWriter.new(900, 560, VIDEO_FPS, 0.85)
+
+	# 录制时把界面全藏起来，视频里只有游戏画面（HUD 还在，因为它是画在世界里的）
+	replay_panel.visible = false
+	replay_slider.set_value_no_signal(0.0)
+	var overlay_was := overlay.visible
+	overlay.visible = false
+	_bb_overlay.visible = false
+	toast.visible = false
+	hint.visible = false
+	menu_btn.visible = false
+	var vp := get_viewport()
+	world.trail.clear()
+	var crop := Rect2i()
+
+	var got := 0
+	for i in total:
+		world.replay_apply(float(i) / float(VIDEO_FPS))
+		world.update_effects(1.0 / float(VIDEO_FPS))
+		world.queue_redraw()
+		# 等两帧：第一帧把 queue_redraw 画出来，第二帧保证抓到的就是它。
+		# （不用 RenderingServer.frame_post_draw —— 无头模式它永远不触发，会把游戏卡死）
+		await get_tree().process_frame
+		await get_tree().process_frame
+		var tex := vp.get_texture()
+		if tex == null:
+			continue                      # 无头 / 无渲染时抓不到画面，直接跳过
+		var img := tex.get_image()
+		if img == null or img.is_empty():
+			continue
+		# 抓到的像素尺寸和逻辑尺寸不是一回事（窗口可能被缩放成 1.9×），
+		# 所以每帧按实际图像算一次该裁哪块
+		var isz := Vector2(img.get_size())
+		var sc := minf(isz.x / 900.0, isz.y / 560.0)
+		var content := Vector2(900.0, 560.0) * sc
+		var off := (isz - content) * 0.5
+		crop = Rect2i(int(off.x), int(off.y), int(content.x), int(content.y))
+		var region := crop.intersection(Rect2i(Vector2i.ZERO, img.get_size()))
+		if region.size.x > 8 and region.size.y > 8:
+			img = img.get_region(region)
+		img.convert(Image.FORMAT_RGB8)
+		if img.get_width() != 900 or img.get_height() != 560:
+			img.resize(900, 560, Image.INTERPOLATE_LANCZOS)
+		avi.add_image(img)
+		got += 1
+		export_btn.text = "导出中 %d%%" % int(float(i + 1) * 100.0 / float(total))
+		if (i + 1) % 2 == 0:
+			await get_tree().process_frame
+
+	export_btn.text = "导出视频"
+	export_btn.disabled = false
+	overlay.visible = overlay_was
+	_bb_overlay.visible = overlay_was
+	menu_btn.visible = true
+	replay_panel.visible = true
+	replay_playing = false
+	world.replay_apply(replay_t)
+	video_exporting = false
+	if got == 0 or not avi.save_to(path):
+		show_toast("导出失败：%s" % ("画面抓不到" if got == 0 else avi.error))
+		return
+	var mb := float(FileAccess.get_file_as_bytes(path).size()) / 1048576.0
+	show_toast("已导出 %.1f 秒 / %d 帧 → %s（%.1f MB）" % [float(got) / float(VIDEO_FPS), got, path, mb])
+	OS.shell_open(out_dir)
+
 func _replay_restart() -> void:
 	replay_t = 0.0
 	replay_playing = true
@@ -853,7 +955,9 @@ func _input(event: InputEvent) -> void:
 		return
 	match k.keycode:
 		KEY_ESCAPE:
-			if replay_active:
+			if video_exporting:
+				pass
+			elif replay_active:
 				close_replay()
 			elif json_panel.visible:
 				close_json()

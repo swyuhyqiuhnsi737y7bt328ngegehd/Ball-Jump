@@ -107,6 +107,24 @@ HUD 的位置也按原版摆回来：`跳跃 ●●` 和 `关卡 n / N` 在右�
 > 导致提示计时永远是 0、**弹出来就再也不消失**。现在补回来了，并且进出场共用同一条 Tween
 > （先 `kill()` 再建），避免淡入还没走完就被淡出接管。
 
+## 导出视频
+
+复盘面板上的 **「导出视频」** 把当前这段回放逐帧渲染、编码成 **MJPEG 的 .avi**，
+默认落在系统的「视频」文件夹（没有就落桌面），导完自动打开所在文件夹。
+
+- 30 fps、900×560、JPEG 质量 0.85，时长跟录像一致（最长 30 秒）
+- 录制期间自动隐藏所有面板（复盘面板、通关浮层、toast、提示条），视频里只有游戏画面 + HUD
+- 窗口被拉伸过也没关系：每帧按实际抓到的像素尺寸重新算裁切区域，把等比缩放留下的黑边裁掉再缩回 900×560
+- 按钮上会实时显示 `导出中 xx%`
+
+Godot 没有内置视频编码，所以这里是自己写的容器：`scripts/avi_writer.gd`
+—— AVI 就是个 RIFF 容器（`RIFF/AVI ` → `LIST hdrl` → `LIST movi` → `idx1`），
+帧数据直接用 `Image.save_jpg_to_buffer()` 出的 JPEG，拼起来就能得到 VLC / ffmpeg / 剪映都能直接打开的文件。
+
+> 踩到的坑：一开始用 `await RenderingServer.frame_post_draw` 等画面，
+> 结果无头模式下这个信号永远不触发，导出直接把游戏卡死。改成 `await process_frame` 两次
+> （第一帧把 `queue_redraw` 画出来，第二帧保证抓到它），并给纹理加了 null 判断。
+
 ## 目录结构
 
 ```
@@ -114,6 +132,7 @@ cd_godot/
 ├── project.godot            项目配置（900×560，canvas_items 拉伸，保证缩放不糊）
 ├── scenes/main.tscn         主场景：Main(Node2D) + World(Node2D)
 ├── scripts/
+│   ├── avi_writer.gd        MJPEG-AVI 写入器（导出复盘视频用）
 │   ├── level_io.gd          关卡数据结构 / 归一化 / 存档（class_name LevelIO）
 │   ├── ui_theme.gd          界面主题：圆角 / 半透明蓝 / 发光 / 过渡动画（class_name UITheme）
 │   ├── world.gd             物理模拟 + 全部画面绘制（class_name World）
@@ -130,6 +149,8 @@ godot --headless --path . --script res://tests/physics_test.gd   # 物理 22 项
 godot --headless --path . --script res://tests/editor_test.gd    # 编辑器 10 项
 godot --headless --path . --script res://tests/replay_test.gd    # 复盘 + toast 20 项
                                                                  # （含死亡复盘、通关复盘、倍速、拖动、返回）
+godot --headless --path . --script res://tests/avi_test.gd       # AVI 写入器 11 项
+                                                                 # （RIFF 结构、帧数、索引、JPEG 能解回来）
 ```
 
 物理：自由落体与终端速度、落地、跳跃高度（离散积分 156.25px）、尖刺致死、金币、
