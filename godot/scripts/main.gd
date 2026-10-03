@@ -37,6 +37,7 @@ var overlay: Control
 var ov_title: Label
 var ov_text: Label
 var ov_btn: Button
+var ov_replay_btn: Button
 var ov_cb: Callable = Callable()
 var toast: Label
 var toast_left := 0.0
@@ -54,6 +55,7 @@ var replay_active := false
 var replay_playing := false
 var replay_t := 0.0
 var replay_speed := 1.0
+var replay_return_overlay := false   # 看完回通关浮层而不是继续玩
 
 var menu_scrim: ColorRect
 var _bb_menu: BackBufferCopy
@@ -103,12 +105,16 @@ func _ready() -> void:
 		_play_level(idx)
 	elif OS.get_cmdline_args().has("--edit-level") and not playlist.is_empty():
 		editor.open_with(playlist[0], 0)
+	elif OS.get_cmdline_args().has("--win-demo") and not playlist.is_empty():
+		_play_level(0)
+		await get_tree().create_timer(0.6).timeout
+		show_overlay("🎉 过关！", "示例关卡 · 跑一圈\n用时 12.34 秒　·　金币 3/5", "下一关", func(): pass)
 	elif OS.get_cmdline_args().has("--replay-demo") and not playlist.is_empty():
 		_play_level(0)
 		await get_tree().create_timer(1.2).timeout
 		world.rec_snapshot_now()
 		open_replay()
-		world.replay_death_fx = true
+		world.replay_end_fx = 0
 
 ## 对应原版的 layoutCanvas()：窗口撑到屏幕的 96% × 94% 并居中，
 ## 剩下的交给 stretch 等比缩放，画面不会被拉变形也不会糊
@@ -256,12 +262,22 @@ func _build_ui() -> void:
 	ov_text.add_theme_font_size_override("font_size", 15)
 	ov_text.add_theme_constant_override("line_spacing", 8)
 	ov_box.add_child(ov_text)
+	var btn_row := HBoxContainer.new()
+	btn_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	btn_row.add_theme_constant_override("separation", 10)
+	ov_box.add_child(btn_row)
+	# 通关也能复盘：看过瘾了再点下一关
+	ov_replay_btn = _mk_button("复盘刚才这一局", func(): open_replay(true))
+	ov_replay_btn.add_theme_font_size_override("font_size", 14)
+	ov_replay_btn.custom_minimum_size = Vector2(176, 48)
+	ov_replay_btn.visible = false
+	btn_row.add_child(ov_replay_btn)
 	ov_btn = _mk_button("继续", func(): _overlay_pressed())
 	UITheme.apply_pill(ov_btn)
 	ov_btn.add_theme_font_size_override("font_size", 16)
 	ov_btn.custom_minimum_size = Vector2(200, 48)
 	ov_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	ov_box.add_child(ov_btn)
+	btn_row.add_child(ov_btn)
 
 	# ---- 关卡菜单（背后也是毛玻璃）----
 	_bb_menu = BackBufferCopy.new()
@@ -349,7 +365,7 @@ func _build_ui() -> void:
 	replay_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	replay_slider.value_changed.connect(func(v: float):
 		replay_t = v
-		world.replay_death_fx = false
+		world.replay_end_fx = 0
 		world.trail.clear()
 		world.replay_apply(replay_t))
 	rrow.add_child(replay_slider)
@@ -425,6 +441,8 @@ func show_overlay(title: String, text: String, btn: String, cb: Callable) -> voi
 	ov_text.text = text
 	ov_btn.text = btn
 	ov_cb = cb
+	# 有录像才给「复盘」按钮（刚复活就死这种太短的就不显示）
+	ov_replay_btn.visible = world.rec_duration_cur() >= 0.35 and not replay_active
 	overlay.visible = true
 	_bb_overlay.visible = true
 	ui_layer.move_child(_bb_overlay, ui_layer.get_child_count() - 2)
@@ -595,14 +613,20 @@ func _speed_label(s: float) -> String:
 	return "%s×" % str(s)
 
 ## 死亡后弹出：回放这一条命，可 0.25× ~ 2× 变速、可拖进度
-func open_replay() -> void:
+func open_replay(from_win := false) -> void:
 	replay_active = true
+	replay_return_overlay = from_win
+	if from_win:
+		world.rec_snapshot_now()      # 通关没有死亡快照，现定一版
+		overlay.visible = false
+		_bb_overlay.visible = false
+		hint.visible = false
 	replay_t = 0.0
 	replay_playing = true
 	replay_speed = 1.0
 	replay_play_btn.text = "暂停"
 	world.replay_mode = true
-	world.replay_death_fx = false
+	world.replay_end_fx = 1 if not from_win else 2
 	world.trail.clear()
 	var dur := world.rec_duration()
 	replay_slider.min_value = 0.0
@@ -621,16 +645,24 @@ func close_replay() -> void:
 	replay_playing = false
 	replay_panel.visible = false
 	world.replay_mode = false
-	world.replay_death_fx = false
+	world.replay_end_fx = 0
 	world.trail.clear()
-	world.reset_ball()
+	if replay_return_overlay:
+		# 从通关浮层进来的，看完回浮层，不要复活球
+		replay_return_overlay = false
+		overlay.visible = true
+		_bb_overlay.visible = true
+		ui_layer.move_child(_bb_overlay, ui_layer.get_child_count() - 2)
+		ui_layer.move_child(overlay, ui_layer.get_child_count() - 1)
+	else:
+		world.reset_ball()
 	refresh_pause()
 
 func _replay_restart() -> void:
 	replay_t = 0.0
 	replay_playing = true
 	replay_play_btn.text = "暂停"
-	world.replay_death_fx = false
+	world.replay_end_fx = 2 if replay_return_overlay else 1
 	world.trail.clear()
 	world.replay_apply(0.0)
 	replay_slider.set_value_no_signal(0.0)
@@ -842,7 +874,7 @@ func _input(event: InputEvent) -> void:
 			elif world.rec_duration_cur() >= 0.35:
 				world.rec_snapshot_now()
 				open_replay()
-				world.replay_death_fx = true     # 手动复盘不放死亡特效
+				world.replay_end_fx = 0          # 手动复盘不放特效
 		KEY_P:
 			frozen = not frozen
 			show_toast("冻结" if frozen else "解冻")

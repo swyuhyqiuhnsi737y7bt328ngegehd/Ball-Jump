@@ -973,7 +973,8 @@ var _life_start := 0               # 当前这条命从第几帧开始
 var _rep_start := 0                # 死亡时定格的回放区间
 var _rep_end := 0
 var replay_mode := false
-var replay_death_fx := false
+## 回放到结尾时放什么特效：0=不放 1=死亡 2=通关
+var replay_end_fx := 0
 
 func _rec_init() -> void:
 	_rec.resize(REC_CAP * REC_STRIDE)
@@ -1004,7 +1005,7 @@ func rec_snapshot_death() -> void:
 	_rec_push()
 	_rep_end = _rec_total
 	_rep_start = maxi(_life_start, _rec_total - REC_CAP + 1)
-	replay_death_fx = false
+	replay_end_fx = 1          # 死亡复盘：结尾补死亡特效
 
 ## 当前这条命已经录了多久（手动复盘用）
 func rec_duration_cur() -> float:
@@ -1014,6 +1015,7 @@ func rec_duration_cur() -> float:
 func rec_snapshot_now() -> void:
 	_rep_end = _rec_total
 	_rep_start = maxi(_life_start, _rec_total - REC_CAP + 1)
+	replay_end_fx = 0          # 手动复盘不放特效，由调用方决定
 
 func rec_frames() -> int:
 	return maxi(0, _rep_end - _rep_start)
@@ -1040,8 +1042,15 @@ func replay_apply(t: float) -> void:
 	trail.append(Vector2(bx, by))
 	if trail.size() > 12:
 		trail.pop_front()
-	# 放到最后一帧时补一次死亡特效
-	if not replay_death_fx and pos >= float(n - 1) - 0.01:
-		replay_death_fx = true
-		spawn_particles(bx, by, Color("ff4d6d"), 26)
-		shake_time = 0.22
+	# 放到最后一帧时补一次特效（死亡 / 通关）
+	if replay_end_fx > 0 and pos >= float(n - 1) - 0.01:
+		var fx := replay_end_fx
+		replay_end_fx = 0
+		if fx == 1:
+			spawn_particles(bx, by, Color("ff4d6d"), 26)
+			shake_time = 0.22
+		else:
+			var gx := float(level["goal"]["x"])
+			var gy := float(level["goal"]["y"])
+			spawn_particles(gx, gy, Color("7dd3fc"), 42)
+			spawn_particles(gx, gy, Color("ffe066"), 26)

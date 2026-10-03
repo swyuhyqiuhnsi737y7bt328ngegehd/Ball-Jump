@@ -78,6 +78,40 @@ func _initialize() -> void:
 	check("关闭后球回到出生点", snappedf(main.world.by, 1.0), 160.0, 2.0)
 	check("关闭后游戏恢复运行", main.playing, true)
 
+	# ---------- 3. 通关也能复盘 ----------
+	print("")
+	print("=== 通关复盘 ===")
+	var lv2: Dictionary = LevelIO.normalize_level({
+		"name": "通关复盘测试",
+		"spawn": {"x": 100, "y": 100},
+		"goal": {"x": 100, "y": 440, "r": 26},
+		"platforms": [{"x": 0, "y": 520, "w": 900, "h": 40}],
+		"spikes": [],
+		"items": [],
+	})
+	main.play_test(lv2)
+	var won_at := -1
+	for i in 400:
+		main._process(1.0 / 120.0)
+		if main.overlay.visible:
+			won_at = i
+			break
+	check("碰到终点弹出通关浮层", main.overlay.visible, true)
+	check("通关浮层上有复盘按钮", main.ov_replay_btn.visible, true)
+	print("  %.2f 秒通关，这条录像 %.2f 秒" % [float(won_at) / 120.0, main.world.rec_duration_cur()])
+	main.ov_replay_btn.pressed.emit()
+	await process_frame
+	check("点复盘后进入回放", main.replay_active, true)
+	check("回放时收起通关浮层", main.overlay.visible, false)
+	main.world.replay_apply(0.0)
+	check("回放起点是出生点", snappedf(main.world.by, 1.0), 100.0, 2.0)
+	main.world.replay_apply(main.world.rec_duration())
+	check("回放终点就是通关位置", main.world.by > 380.0, true)
+	main.close_replay()
+	await process_frame
+	check("看完回到通关浮层", main.overlay.visible, true)
+	check("看完不再回放", main.replay_active, false)
+
 	print("")
 	print("失败 %d 项 ❌" % fails if fails > 0 else "复盘 / toast 自检全部通过 ✅")
 	quit()
