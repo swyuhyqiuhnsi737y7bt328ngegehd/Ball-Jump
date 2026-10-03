@@ -81,6 +81,7 @@ var _ball_tex: ImageTexture
 var _coin_tex: ImageTexture
 
 func _ready() -> void:
+	_rec_init()
 	_sb_plat = StyleBoxFlat.new()
 	_sb_plat.draw_center = false          # 只借它画阴影，本体用渐变多边形
 	_sb_plat.bg_color = Color("3d55bd")
@@ -140,6 +141,7 @@ func load_level(lv: Dictionary) -> void:
 	portal_cd = 0.0
 	active_checkpoint = -1
 	current_spawn = Vector2(float(lv["spawn"]["x"]), float(lv["spawn"]["y"]))
+	rec_reset()
 
 	var portals: Array = []
 	for i in (lv["items"] as Array).size():
@@ -174,8 +176,10 @@ func reset_ball() -> void:
 	jump_pressed = false
 	trail.clear()
 	portal_cd = 0.0
+	_rec_mark_life()
 
 func die() -> void:
+	rec_snapshot_death()          # 先把这条命的录像定格，再复活
 	spawn_particles(bx, by, Color("ff4d6d"), 26)
 	shake_time = 0.22
 	reset_ball()
@@ -312,6 +316,9 @@ func step(dt: float) -> void:
 			else:
 				by = float(p["y"]) + float(p["h"]) + br
 				bvy = 0.0
+
+	# 录像：在危险判定之前记一帧，这样死亡位置本身就是最后一帧
+	_rec_push()
 
 	_update_items(dt)
 
@@ -951,3 +958,90 @@ func _disc(center: Vector2, radius: float, col: Color, seg := 18) -> void:
 		var a := TAU * float(i) / float(seg)
 		pts.append(center + Vector2(cos(a), sin(a)) * radius)
 	draw_colored_polygon(pts, col)
+
+# ================================================================ 录像 / 复盘
+# 每物理帧记一次球的状态，环形缓冲存最近 30 秒；死后可以按任意倍速回放。
+# 复现方式是「把球放回记录的位置」，所以绘制、拖尾、眼睛朝向全都自动跟着走。
+
+const REC_STRIDE := 6
+const REC_CAP := 120 * 30          # 30 秒
+
+var _rec := PackedFloat32Array()
+var _rec_head := 0                 # 下一个写入槽
+var _rec_total := 0                # 累计写入帧数
+var _life_start := 0               # 当前这条命从第几帧开始
+var _rep_start := 0                # 死亡时定格的回放区间
+var _rep_end := 0
+var replay_mode := false
+var replay_death_fx := false
+
+func _rec_init() -> void:
+	_rec.resize(REC_CAP * REC_STRIDE)
+
+func _rec_push() -> void:
+	var i := _rec_head * REC_STRIDE
+	_rec[i] = bx
+	_rec[i + 1] = by
+	_rec[i + 2] = bvx
+	_rec[i + 3] = bvy
+	_rec[i + 4] = 1.0 if on_ground else 0.0
+	_rec[i + 5] = float(jumps_left)
+	_rec_head = (_rec_head + 1) % REC_CAP
+	_rec_total += 1
+
+func _rec_mark_life() -> void:
+	_life_start = _rec_total
+
+func rec_reset() -> void:
+	_rec_head = 0
+	_rec_total = 0
+	_life_start = 0
+	_rep_start = 0
+	_rep_end = 0
+
+## 死亡瞬间把这条命的区间定格下来（之后 reset_ball 会开始下一条命）
+func rec_snapshot_death() -> void:
+	_rec_push()
+	_rep_end = _rec_total
+	_rep_start = maxi(_life_start, _rec_total - REC_CAP + 1)
+	replay_death_fx = false
+
+## 当前这条命已经录了多久（手动复盘用）
+func rec_duration_cur() -> float:
+	return float(maxi(0, _rec_total - _life_start)) / 120.0
+
+## 手动复盘：把「现在」定格成回放区间（不播死亡特效）
+func rec_snapshot_now() -> void:
+	_rep_end = _rec_total
+	_rep_start = maxi(_life_start, _rec_total - REC_CAP + 1)
+
+func rec_frames() -> int:
+	return maxi(0, _rep_end - _rep_start)
+
+func rec_duration() -> float:
+	return float(rec_frames()) / 120.0
+
+## 把球放到「这条命开始后 t 秒」的位置（帧间插值，任何倍速都顺滑）
+func replay_apply(t: float) -> void:
+	var n := rec_frames()
+	if n < 2:
+		return
+	var pos := clampf(t * 120.0, 0.0, float(n - 1))
+	var i0 := int(pos)
+	var i1 := mini(i0 + 1, n - 1)
+	var k := pos - float(i0)
+	var ia := ((_rep_start + i0) % REC_CAP) * REC_STRIDE
+	var ib := ((_rep_start + i1) % REC_CAP) * REC_STRIDE
+	bx = lerpf(_rec[ia], _rec[ib], k)
+	by = lerpf(_rec[ia + 1], _rec[ib + 1], k)
+	bvx = lerpf(_rec[ia + 2], _rec[ib + 2], k)
+	bvy = lerpf(_rec[ia + 3], _rec[ib + 3], k)
+	on_ground = _rec[ia + 4] > 0.5
+	trail.append(Vector2(bx, by))
+	if trail.size() > 12:
+		trail.pop_front()
+	# 放到最后一帧时补一次死亡特效
+	if not replay_death_fx and pos >= float(n - 1) - 0.01:
+		replay_death_fx = true
+		spawn_particles(bx, by, Color("ff4d6d"), 26)
+		shake_time = 0.22

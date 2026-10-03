@@ -40,8 +40,21 @@ var ov_btn: Button
 var ov_cb: Callable = Callable()
 var toast: Label
 var toast_left := 0.0
+var _toast_tween: Tween
+var _scale_hint_time := 0.0      # 变速提示显示多久了（几秒后淡下去）
 var hint: Label
 var menu_btn: Button
+# ---- 复盘（死亡回放）----
+var replay_panel: PanelContainer
+var replay_slider: HSlider
+var replay_info: Label
+var replay_play_btn: Button
+var replay_speed_btns := {}
+var replay_active := false
+var replay_playing := false
+var replay_t := 0.0
+var replay_speed := 1.0
+
 var menu_scrim: ColorRect
 var _bb_menu: BackBufferCopy
 var _bb_overlay: BackBufferCopy
@@ -90,6 +103,12 @@ func _ready() -> void:
 		_play_level(idx)
 	elif OS.get_cmdline_args().has("--edit-level") and not playlist.is_empty():
 		editor.open_with(playlist[0], 0)
+	elif OS.get_cmdline_args().has("--replay-demo") and not playlist.is_empty():
+		_play_level(0)
+		await get_tree().create_timer(1.2).timeout
+		world.rec_snapshot_now()
+		open_replay()
+		world.replay_death_fx = true
 
 ## 对应原版的 layoutCanvas()：窗口撑到屏幕的 96% × 94% 并居中，
 ## 剩下的交给 stretch 等比缩放，画面不会被拉变形也不会糊
@@ -296,6 +315,58 @@ func _build_ui() -> void:
 	foot.add_child(spacer)
 	foot.add_child(_mk_button("关闭", func(): close_menu(), true))
 
+	# ---- 复盘面板（死亡后回放这一条命）----
+	replay_panel = PanelContainer.new()
+	UITheme.apply_floating(replay_panel)
+	replay_panel.position = Vector2(110, 452)
+	replay_panel.size = Vector2(680, 98)
+	replay_panel.visible = false
+	ui_layer.add_child(replay_panel)
+	var rv := VBoxContainer.new()
+	rv.add_theme_constant_override("separation", 6)
+	replay_panel.add_child(rv)
+	var rhead := HBoxContainer.new()
+	rv.add_child(rhead)
+	var rtitle := Label.new()
+	rtitle.text = "复盘"
+	rtitle.add_theme_font_size_override("font_size", 15)
+	rtitle.add_theme_color_override("font_color", UITheme.C_ACCENT_SOFT)
+	rhead.add_child(rtitle)
+	replay_info = Label.new()
+	replay_info.add_theme_font_size_override("font_size", 12)
+	replay_info.add_theme_color_override("font_color", UITheme.C_TEXT_DIM)
+	replay_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rhead.add_child(replay_info)
+	rhead.add_child(_mk_mini("关闭", func(): close_replay()))
+	var rrow := HBoxContainer.new()
+	rrow.add_theme_constant_override("separation", 6)
+	rv.add_child(rrow)
+	replay_slider = HSlider.new()
+	replay_slider.min_value = 0.0
+	replay_slider.max_value = 1.0
+	replay_slider.step = 0.005
+	replay_slider.custom_minimum_size = Vector2(220, 0)
+	replay_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	replay_slider.value_changed.connect(func(v: float):
+		replay_t = v
+		world.replay_death_fx = false
+		world.trail.clear()
+		world.replay_apply(replay_t))
+	rrow.add_child(replay_slider)
+	rrow.add_child(_mk_mini("重播", func(): _replay_restart()))
+	replay_play_btn = _mk_mini("暂停", func(): _replay_toggle())
+	rrow.add_child(replay_play_btn)
+	var spd := Label.new()
+	spd.text = "倍速"
+	spd.add_theme_font_size_override("font_size", 12)
+	spd.add_theme_color_override("font_color", UITheme.C_TEXT_DIM)
+	rrow.add_child(spd)
+	for s in [0.25, 0.5, 1.0, 2.0]:
+		var b := _mk_mini(_speed_label(s), func(): _replay_set_speed(s))
+		b.custom_minimum_size = Vector2(52, 0)
+		replay_speed_btns[s] = b
+		rrow.add_child(b)
+
 	# ---- JSON 面板 ----
 	json_panel = PanelContainer.new()
 	UITheme.apply_card(json_panel)
@@ -325,13 +396,29 @@ func _build_ui() -> void:
 
 func show_toast(msg: String) -> void:
 	toast.text = msg
-	if not toast.visible:
-		toast.visible = true
-		toast.modulate.a = 0.0
-	var tw := toast.create_tween()
-	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(toast, "modulate:a", 1.0, 0.22)
-	tw.parallel().tween_property(toast, "offset_top", 18.0, 0.22).from(8.0)
+	# 进出场共用一条补间，避免「淡入还没走完就被淡出接管」而卡在中间
+	if _toast_tween != null and _toast_tween.is_valid():
+		_toast_tween.kill()
+	toast.visible = true
+	toast.modulate.a = 0.0
+	toast.offset_top = 6.0
+	_toast_tween = toast.create_tween()
+	_toast_tween.set_parallel(true)
+	_toast_tween.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	_toast_tween.tween_property(toast, "modulate:a", 1.0, 0.22)
+	_toast_tween.tween_property(toast, "offset_top", 18.0, 0.22)
+	toast_left = 2.2          # ★ 之前这行丢了，toast_left 永远是 0 → 提示永不消失
+
+func _hide_toast() -> void:
+	if _toast_tween != null and _toast_tween.is_valid():
+		_toast_tween.kill()
+	toast.visible = true
+	_toast_tween = toast.create_tween()
+	_toast_tween.set_parallel(true)
+	_toast_tween.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	_toast_tween.tween_property(toast, "modulate:a", 0.0, 0.28)
+	_toast_tween.tween_property(toast, "offset_top", 6.0, 0.28)
+	_toast_tween.chain().tween_callback(func(): toast.visible = false)
 
 func show_overlay(title: String, text: String, btn: String, cb: Callable) -> void:
 	ov_title.text = title
@@ -363,7 +450,7 @@ func _overlay_pressed() -> void:
 
 func refresh_pause() -> void:
 	playing = (not level.is_empty()) and (not editor.is_open()) and (not menu_panel.visible) \
-		and (not json_panel.visible) and (not overlay.visible)
+		and (not json_panel.visible) and (not overlay.visible) and (not replay_active)
 
 # ================================================================ 关卡菜单
 
@@ -495,6 +582,80 @@ func load_level(i: int) -> void:
 
 func _on_ball_died() -> void:
 	deaths += 1
+	# 有录像就弹复盘；太短（刚复活就死）就不打扰
+	if world.rec_duration() >= 0.35:
+		open_replay()
+
+# ================================================================ 复盘
+
+func _speed_label(s: float) -> String:
+	# GDScript 的 % 格式化不支持 %g，自己来
+	if is_equal_approx(s, roundf(s)):
+		return "%d×" % int(roundf(s))
+	return "%s×" % str(s)
+
+## 死亡后弹出：回放这一条命，可 0.25× ~ 2× 变速、可拖进度
+func open_replay() -> void:
+	replay_active = true
+	replay_t = 0.0
+	replay_playing = true
+	replay_speed = 1.0
+	replay_play_btn.text = "暂停"
+	world.replay_mode = true
+	world.replay_death_fx = false
+	world.trail.clear()
+	var dur := world.rec_duration()
+	replay_slider.min_value = 0.0
+	replay_slider.max_value = maxf(0.01, dur)
+	replay_slider.set_value_no_signal(0.0)
+	replay_info.text = "这条命撑了 %.1f 秒　·　累计死亡 %d 次　（拖动进度条可任意回看）" % [dur, deaths]
+	for s in replay_speed_btns:
+		UITheme.apply_toggle(replay_speed_btns[s], is_equal_approx(s, replay_speed))
+	replay_panel.visible = true
+	UITheme.pop_in_free(replay_panel, 0.22, 0.97, 18.0)
+	world.replay_apply(0.0)
+	refresh_pause()
+
+func close_replay() -> void:
+	replay_active = false
+	replay_playing = false
+	replay_panel.visible = false
+	world.replay_mode = false
+	world.replay_death_fx = false
+	world.trail.clear()
+	world.reset_ball()
+	refresh_pause()
+
+func _replay_restart() -> void:
+	replay_t = 0.0
+	replay_playing = true
+	replay_play_btn.text = "暂停"
+	world.replay_death_fx = false
+	world.trail.clear()
+	world.replay_apply(0.0)
+	replay_slider.set_value_no_signal(0.0)
+
+func _replay_toggle() -> void:
+	replay_playing = not replay_playing
+	replay_play_btn.text = "暂停" if replay_playing else "播放"
+
+func _replay_set_speed(s: float) -> void:
+	replay_speed = s
+	for k in replay_speed_btns:
+		UITheme.apply_toggle(replay_speed_btns[k], is_equal_approx(k, s))
+	show_toast("回放 " + _speed_label(s) + " 速度")
+
+func _replay_tick(delta: float) -> void:
+	if not replay_playing:
+		return
+	var dur := world.rec_duration()
+	replay_t += delta * replay_speed
+	if replay_t >= dur:
+		replay_t = dur
+		replay_playing = false
+		replay_play_btn.text = "播放"
+	world.replay_apply(replay_t)
+	replay_slider.set_value_no_signal(replay_t)
 
 func _on_level_won() -> void:
 	playing = false
@@ -597,14 +758,16 @@ func _process(delta: float) -> void:
 	world.hud_testing = testing
 	world.hud_steps = physics_steps
 
+	# delta 偶尔会很大（卡顿/首帧），夹一下，别让一条提示瞬间被跳过
+	var udelta := minf(delta, 0.1)
 	if toast_left > 0.0:
-		toast_left -= delta
+		toast_left -= udelta
 		if toast_left <= 0.0:
-			var tw := toast.create_tween()
-			tw.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
-			tw.tween_property(toast, "modulate:a", 0.0, 0.28)
-			tw.parallel().tween_property(toast, "offset_top", 6.0, 0.28)
-			tw.tween_callback(func(): toast.visible = false)
+			_hide_toast()
+	if _scale_hint_time > 0.0:
+		_scale_hint_time -= udelta
+	if replay_active:
+		_replay_tick(delta)
 
 	if frozen:
 		var steps := 0
@@ -658,7 +821,9 @@ func _input(event: InputEvent) -> void:
 		return
 	match k.keycode:
 		KEY_ESCAPE:
-			if json_panel.visible:
+			if replay_active:
+				close_replay()
+			elif json_panel.visible:
 				close_json()
 			elif editor.is_open():
 				editor.exit()
@@ -670,6 +835,14 @@ func _input(event: InputEvent) -> void:
 				editor.reopen()
 			else:
 				open_menu()
+		KEY_R:
+			# 手动复盘：把刚才这一段倒回去看（死了是自动弹）
+			if replay_active:
+				close_replay()
+			elif world.rec_duration_cur() >= 0.35:
+				world.rec_snapshot_now()
+				open_replay()
+				world.replay_death_fx = true     # 手动复盘不放死亡特效
 		KEY_P:
 			frozen = not frozen
 			show_toast("冻结" if frozen else "解冻")

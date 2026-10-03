@@ -88,6 +88,24 @@ HUD 的位置也按原版摆回来：`跳跃 ●●` 和 `关卡 n / N` 在右�
 2. **不要用 Tween 去动容器里子控件的 `position`**。容器每次排版会把它按回去，两边打架的结果是所有子控件叠在 `(0,0)`。
    `pop_in` 只动 `modulate` 和 `scale`，需要滑入的自由面板才用 `pop_in_free`。
 
+## 复盘（死亡回放）
+
+球每物理帧记一次状态（环形缓冲，最近 30 秒），**死掉那一刻自动定格这段录像并弹出复盘面板**：
+
+- 进度条可任意拖动回看
+- `重播` / `暂停`，倍速 `0.25× 0.5× 1× 2×`
+- 播到结尾会自动补一次死亡粒子特效并暂停
+- 按 `Esc` 或 `关闭` 继续游戏（球回到出生点）
+- 没死也可以按 `R` 手动回放刚才这一段
+
+实现上只记录球的 `(x, y, vx, vy, on_ground, jumps_left)`，回放时把球「放回」记录的位置，
+所以拖尾、眼睛朝向、粒子这些都自动跟着走；帧间做线性插值，任何倍速都顺滑。
+数据存在 `PackedFloat32Array` 里（`REC_CAP = 120 × 30` 帧 × 6 个 float，约 86 KB）。
+
+> 顺带修了一个 bug：`show_toast()` 里 `toast_left = 2.2` 那行不知什么时候丢了，
+> 导致提示计时永远是 0、**弹出来就再也不消失**。现在补回来了，并且进出场共用同一条 Tween
+> （先 `kill()` 再建），避免淡入还没走完就被淡出接管。
+
 ## 目录结构
 
 ```
@@ -109,6 +127,7 @@ cd_godot/
 ```bash
 godot --headless --path . --script res://tests/physics_test.gd   # 物理 22 项
 godot --headless --path . --script res://tests/editor_test.gd    # 编辑器 10 项
+godot --headless --path . --script res://tests/replay_test.gd    # 复盘 + toast 12 项
 ```
 
 物理：自由落体与终端速度、落地、跳跃高度（离散积分 156.25px）、尖刺致死、金币、
@@ -120,7 +139,8 @@ godot --headless --path . --script res://tests/editor_test.gd    # 编辑器 10 
 > 编辑器鼠标走 `_unhandled_input`：点在工具栏或属性面板上的那一下会被 Control 吃掉，
 > 不会顺手在画布上画一笔（另外编辑器里还挡了一层 `over_ui()` 矩形判断，双保险）。
 
-调试用启动参数：`--play` 直接进第一关，`--edit-level` 直接进编辑器。
+调试用启动参数：`--play` 直接进第一关（`--play --level=N` 进第 N 关），
+`--edit-level` 直接进编辑器，`--replay-demo` 直接弹复盘面板。
 
 ## 移植说明
 

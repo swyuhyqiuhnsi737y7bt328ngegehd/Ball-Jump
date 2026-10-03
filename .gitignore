@@ -1,2 +1,8 @@
 .godot/
 *.tmp
+
+# 导出产物（自己 godot --export 生成，别提交）
+*.exe
+*.pck
+*.zip
+build/
