@@ -116,13 +116,24 @@ HUD 的位置也按原版摆回来：`跳跃 ●●` 和 `关卡 n / N` 在右�
 | **导出 GIF**（推荐） | GIF89a，450×280 @ 12fps | **不需要任何解码器**：浏览器、微信、QQ、Windows 照片、手机相册全能放，自带无限循环 |
 | 导出 AVI | MJPEG，900×560 @ 30fps | 体积小画质好，但要 VLC / 剪映 / ffmpeg 这类带 MJPEG 解码器的软件 —— **Windows 自带播放器打不开**，见下 |
 
-### 为什么 AVI「播放不了」
+### AVI 之前是真的坏了（已修）
 
-这不是文件坏了：MJPEG 的 AVI 是合法容器（Godot 自己的 Movie Maker 也写这个格式），
-而是 **Windows 根本没有 MJPEG 解码器**。实测用系统自带的媒体栈（WPF MediaPlayer，
-底层是 Media Foundation）打开导出的 avi，返回 HasVideo=False。
+第一版导出的 avi 连 VLC 都打不开。原因不是播放器缺解码器，是我把头部写错了：
+`LIST` 里的 `hdrl` 被包了两层 —— 手动拼了一次四字符码，又交给 `_list()` 拼了一次，
+于是变成 `LIST('hdrl' 'hdrl' avih ...)`，解码器读到一个长度十七亿的假块，直接拒绝整个文件。
 
-所以又写了一个 GIF 导出：GIF 用的是每个系统都内置的解码，最稳。
+修完之后的实测：
+
+- **ffmpeg**：识别为 `mjpeg (Baseline) 900x560 30fps`，16 帧全部解码通过
+- **VLC**：正常解码并成功转码出 mp4
+
+教训：原来那个「结构自检」只找了 movi / 00dc / idx1，**没有递归检查整棵 chunk 树**，
+所以完全放过了这个错误。现在 `tests/avi_test.gd` 会递归遍历并对每一层的长度做越界检查，
+还会验证 idx1 里的偏移真的指向对应的 00dc 帧。
+
+另外：MJPEG 在 **Windows 自带播放器**（电影和电视 / 照片）里确实没有解码器
+（实测 WPF MediaPlayer 返回 HasVideo=False），所以只想往群里或手机上发的话，
+GIF 仍然是更省心的选择。
 
 ### GIF 实现
 

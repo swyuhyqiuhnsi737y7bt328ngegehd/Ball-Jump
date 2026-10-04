@@ -77,7 +77,9 @@ func save_to(path: String) -> bool:
 	var strh := _strh()
 	var strf := _strf()
 	var strl := _chunk("strh", strh) + _chunk("strf", strf)
-	var hdrl := _fourcc("hdrl") + _chunk("avih", avih) + _list("strl", strl)
+	# ★ _list() 自己会写 kind 四字符码，这里不能再手动拼一次 'hdrl'，
+	#   否则变成 LIST('hdrl' 'hdrl' avih ...)，解码器读到一个长度 17 亿的假块直接拒绝
+	var hdrl := _chunk("avih", avih) + _list("strl", strl)
 	var body := _list("hdrl", hdrl) + _list("movi", movi) + _chunk("idx1", idx)
 
 	# ---- RIFF 外壳 ----
