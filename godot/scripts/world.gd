@@ -1023,6 +1023,22 @@ func rec_frames() -> int:
 func rec_duration() -> float:
 	return float(rec_frames()) / 120.0
 
+## 拖尾按「时间窗口」重建，而不是按「调用次数」追加。
+## 实时玩的时候每物理帧追加一个点、保留 12 个 = 最近 0.1 秒的残影；
+## 回放/导出时如果把 replay_apply 的每次调用都当成一个点，
+## 30fps 导出就变成 0.4 秒、12fps 的 GIF 更是 1 秒 —— 残影会拖成一条长尾巴。
+## 所以这里直接从录像里取「最后 0.1 秒」的原始帧位置，任何倍速/任何导出帧率都一致。
+func _rebuild_trail_for(pos: float) -> void:
+	var n := rec_frames()
+	if n < 2:
+		return
+	var end_i := int(clampf(pos, 0.0, float(n - 1)))
+	var start_i := maxi(0, end_i - 11)
+	trail.clear()
+	for i in range(start_i, end_i + 1):
+		var idx := ((_rep_start + i) % REC_CAP) * REC_STRIDE
+		trail.append(Vector2(_rec[idx], _rec[idx + 1]))
+
 ## 把球放到「这条命开始后 t 秒」的位置（帧间插值，任何倍速都顺滑）
 func replay_apply(t: float) -> void:
 	var n := rec_frames()
@@ -1039,9 +1055,7 @@ func replay_apply(t: float) -> void:
 	bvx = lerpf(_rec[ia + 2], _rec[ib + 2], k)
 	bvy = lerpf(_rec[ia + 3], _rec[ib + 3], k)
 	on_ground = _rec[ia + 4] > 0.5
-	trail.append(Vector2(bx, by))
-	if trail.size() > 12:
-		trail.pop_front()
+	_rebuild_trail_for(pos)
 	# 放到最后一帧时补一次特效（死亡 / 通关）
 	if replay_end_fx > 0 and pos >= float(n - 1) - 0.01:
 		var fx := replay_end_fx

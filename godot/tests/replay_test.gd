@@ -112,6 +112,56 @@ func _initialize() -> void:
 	check("看完回到通关浮层", main.overlay.visible, true)
 	check("看完不再回放", main.replay_active, false)
 
+	# ---------- 4. 拖尾必须是「最近 0.1 秒」，跟采样率无关 ----------
+	print("")
+	print("=== 拖尾时间窗口 ===")
+	main.play_test(lv2)
+	for i in 400:
+		main._process(1.0 / 120.0)
+		if main.overlay.visible:
+			break
+	main.ov_replay_btn.pressed.emit()
+	await process_frame
+	var W: Node = main.world
+
+	# 同一时刻，用三种采样率跑过去，拖尾应该完全一样
+	var trail_ref := []
+	W.replay_apply(0.45)
+	trail_ref = W.trail.duplicate()
+	check("拖尾点数 = 12", W.trail.size(), 12)
+
+	# 先用 30fps 一路跑，再用 12fps 一路跑，最后都补一帧到 0.45 —— 终点相同才能比
+	W.trail.clear()
+	for i in range(0, 14):
+		W.replay_apply(float(i) / 30.0)
+	W.replay_apply(0.45)
+	var at30: Array = W.trail.duplicate()
+
+	W.trail.clear()
+	for i in range(0, 6):
+		W.replay_apply(float(i) / 12.0)
+	W.replay_apply(0.45)
+	var at12: Array = W.trail.duplicate()
+
+	check("30fps 采样后点数 = 12", at30.size(), 12)
+	check("12fps 采样后点数 = 12", at12.size(), 12)
+	var span30: float = (at30[0] as Vector2).distance_to(at30[at30.size() - 1])
+	var span12: float = (at12[0] as Vector2).distance_to(at12[at12.size() - 1])
+	print("  0.45 秒处拖尾跨度：30fps 采样 %.1f px，12fps 采样 %.1f px" % [span30, span12])
+	check("两种采样率拖尾完全一致（差 < 0.5px）", absf(span30 - span12) < 0.5, true)
+	# 12 个记录帧 = 11/120 ≈ 0.092 秒；此处自由落体约 1000px/s，所以跨度应该在 90px 上下
+	check("跨度符合 0.092 秒的下落距离（40~150px）", span30 > 40.0 and span30 < 150.0, true)
+	check("拖尾就等于调用次数无关的固定窗口", at30.size() == at12.size(), true)
+
+	# 拖尾首点应该就是 11 帧之前的位置
+	W.replay_apply(0.45)
+	var tip: Vector2 = W.trail[0]
+	var pos0: Vector2 = W.trail[W.trail.size() - 1]
+	print("  拖尾首点 y=%.1f，末端 y=%.1f（球 y=%.1f）" % [tip.y, pos0.y, W.by])
+	check("末端点就是球当前位置", snappedf(pos0.y, 1.0), snappedf(W.by, 1.0))
+	main.close_replay()
+	await process_frame
+
 	print("")
 	print("失败 %d 项 ❌" % fails if fails > 0 else "复盘 / toast 自检全部通过 ✅")
 	quit()
