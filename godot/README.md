@@ -45,6 +45,13 @@
 - **保存**：存到 `user://balljump_levels.json`
 - **JSON**：当前关卡的 JSON 导入 / 导出，或复制到剪贴板
 
+> **试玩（▶ 试玩）的坑**：`refresh_pause()` 把 `editor.opened` 当成「该暂停」，
+> 而 `test_play()` 原来只是调 `main.play_test()`，**没有把编辑器收起来** ——
+> 结果试玩进去是暂停的、球一动不动，而且 Esc 会被 `editor.exit()` 抢走（而不是回到编辑器）。
+> 现在 `test_play()` 先把 `opened` 置 false 并隐藏工具栏 / 属性面板、关掉 `world.editor_mode`，
+> 「从编辑器来的」这件事交给 `main.testing` 记着，通关或 Esc 后 `editor.reopen()` 回去。
+> 回归测试见 `tests/testplay_test.gd`（21 项：试玩能跑、通关回编辑器、Esc 回编辑器、试玩中死亡弹复盘后还能继续）。
+
 ## 和网页版的兼容性
 
 关卡的 JSON 结构和 `cd.html` **完全一致**（字段名、取值范围、默认值、坐标上限都照搬），所以：
@@ -206,6 +213,8 @@ godot --headless --path . --script res://tests/avi_test.gd       # AVI 写入器
                                                                  # （RIFF 结构、帧数、索引、JPEG 能解回来）
 godot --headless --path . --script res://tests/gif_test.gd       # GIF 写入器 9 项
                                                                  # （文件头、尺寸、GCE 块数、trailer）
+godot --headless --path . --script res://tests/testplay_test.gd  # 试玩流程 21 项
+                                                                 # （试玩能跑、通关/Esc 回编辑器、试玩中死亡复盘）
 ```
 
 物理：自由落体与终端速度、落地、跳跃高度（离散积分 156.25px）、尖刺致死、金币、

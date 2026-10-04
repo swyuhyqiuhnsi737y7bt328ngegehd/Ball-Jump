@@ -589,8 +589,11 @@ func reset_run() -> void:
 ## 编辑器「试玩」：跑一份临时关卡，不进关卡列表
 func play_test(lv: Dictionary) -> void:
 	testing = true
+	deaths = 0
+	total_time = 0.0
 	level_index = -1
 	level = lv
+	world.editor_mode = false      # 试玩要看游戏画面，不是编辑器网格
 	world.load_level(lv)
 	set_menu_visible(false)
 	menu_btn.visible = true

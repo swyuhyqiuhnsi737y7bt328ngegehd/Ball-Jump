@@ -167,6 +167,9 @@ func open_with(lv: Dictionary, index: int) -> void:
 
 func enter() -> void:
 	opened = true
+	# 回到编辑器 = 试玩结束，把试玩标记清掉（HUD 的「试玩模式」也一起收）
+	main.testing = false
+	main.world.hud_testing = false
 	main.set_menu_visible(false)
 	main.hide_overlay()
 	main.hint.visible = false
@@ -216,9 +219,20 @@ func _exit_now() -> void:
 	main.open_menu()
 
 func test_play() -> void:
-	# 试玩不会往关卡列表里塞副本，退出时回编辑器
+	# 试玩不会往关卡列表里塞副本，退出时回编辑器。
+	# ★ 必须先把编辑器收起来（opened = false）：
+	#   main.refresh_pause() 会把 editor.opened 当成「该暂停」，不收起来的话
+	#   试玩进去是暂停的、球根本不动，而且 Esc 会被 editor.exit() 抢走。
+	#   记住是从编辑器出来的这件事由 main.testing 负责，回来时 reopen() 即可。
+	opened = false
+	bar.visible = false
+	props.visible = false
+	world.editor_mode = false
+	drag = null
+	draft = null
+	selected = null
 	main.play_test(edit_level.duplicate(true))
-	main.show_toast("试玩中，Esc 打开菜单")
+	main.show_toast("试玩中，Esc 回到编辑器")
 
 func reopen() -> void:
 	enter()
