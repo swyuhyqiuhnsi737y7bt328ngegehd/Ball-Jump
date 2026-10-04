@@ -57,8 +57,12 @@ var replay_t := 0.0
 var replay_speed := 1.0
 var replay_return_overlay := false   # 看完回通关浮层而不是继续玩
 var export_btn: Button
+var export_gif_btn: Button
 var video_exporting := false
 const VIDEO_FPS := 30
+const GIF_W := 450       # GIF 体积考虑，导出时缩到这个尺寸
+const GIF_H := 280
+const GIF_FPS := 12
 
 var menu_scrim: ColorRect
 var _bb_menu: BackBufferCopy
@@ -356,8 +360,10 @@ func _build_ui() -> void:
 	replay_info.add_theme_color_override("font_color", UITheme.C_TEXT_DIM)
 	replay_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	rhead.add_child(replay_info)
-	export_btn = _mk_mini("导出视频", func(): export_replay_video())
-	export_btn.add_theme_color_override("font_color", UITheme.C_ACCENT_SOFT)
+	export_gif_btn = _mk_mini("导出 GIF", func(): export_replay(true))
+	export_gif_btn.add_theme_color_override("font_color", UITheme.C_ACCENT_SOFT)
+	rhead.add_child(export_gif_btn)
+	export_btn = _mk_mini("导出 AVI", func(): export_replay(false))
 	rhead.add_child(export_btn)
 	rhead.add_child(_mk_mini("关闭", func(): close_replay()))
 	var rrow := HBoxContainer.new()
@@ -638,7 +644,7 @@ func open_replay(from_win := false) -> void:
 	replay_slider.min_value = 0.0
 	replay_slider.max_value = maxf(0.01, dur)
 	replay_slider.set_value_no_signal(0.0)
-	replay_info.text = "这条命撑了 %.1f 秒　·　累计死亡 %d 次　（拖动进度条可任意回看）" % [dur, deaths]
+	replay_info.text = "这条命 %.1f 秒　·　累计死亡 %d 次　·　可拖动回看" % [dur, deaths]
 	for s in replay_speed_btns:
 		UITheme.apply_toggle(replay_speed_btns[s], is_equal_approx(s, replay_speed))
 	replay_panel.visible = true
@@ -679,8 +685,10 @@ func _video_dir() -> String:
 			return d
 	return ProjectSettings.globalize_path("user://")
 
-## 把当前复盘逐帧渲染出来，编成一个 MJPEG 的 .avi
-func export_replay_video() -> void:
+## 把当前复盘逐帧渲染出来。
+## to_gif=true → GIF（不需要任何解码器，浏览器/微信/相册都能放，推荐）
+## to_gif=false → MJPEG 的 AVI（体积小画质好，但 Windows 自带播放器没有 MJPEG 解码器）
+func export_replay(to_gif := true) -> void:
 	if video_exporting:
 		return
 	var dur: float = world.rec_duration()
@@ -690,12 +698,26 @@ func export_replay_video() -> void:
 	video_exporting = true
 	replay_playing = false
 	export_btn.disabled = true
-	var total := maxi(1, int(round(dur * float(VIDEO_FPS))))
+	export_gif_btn.disabled = true
+	var out_fps := GIF_FPS if to_gif else VIDEO_FPS
+	var total := maxi(1, int(round(dur * float(out_fps))))
 	var out_dir := _video_dir()
 	var stamp := Time.get_datetime_string_from_system(false, true)
 	stamp = stamp.replace("-", "").replace(":", "").replace("T", "-").replace(" ", "-")
-	var path := out_dir.path_join("BallJump-replay-%s.avi" % stamp)
-	var avi := AviWriter.new(900, 560, VIDEO_FPS, 0.85)
+	var ext := "gif" if to_gif else "avi"
+	var path := out_dir.path_join("BallJump-replay-%s.%s" % [stamp, ext])
+	var avi: AviWriter = null
+	var gif: GifWriter = null
+	if to_gif:
+		gif = GifWriter.new(GIF_W, GIF_H, GIF_FPS)
+		if not gif.open(path):
+			video_exporting = false
+			export_btn.disabled = false
+			export_gif_btn.disabled = false
+			show_toast("导出失败：%s" % gif.error)
+			return
+	else:
+		avi = AviWriter.new(900, 560, VIDEO_FPS, 0.85)
 
 	# 录制时把界面全藏起来，视频里只有游戏画面（HUD 还在，因为它是画在世界里的）
 	replay_panel.visible = false
@@ -712,8 +734,8 @@ func export_replay_video() -> void:
 
 	var got := 0
 	for i in total:
-		world.replay_apply(float(i) / float(VIDEO_FPS))
-		world.update_effects(1.0 / float(VIDEO_FPS))
+		world.replay_apply(float(i) / float(out_fps))
+		world.update_effects(1.0 / float(out_fps))
 		world.queue_redraw()
 		# 等两帧：第一帧把 queue_redraw 画出来，第二帧保证抓到的就是它。
 		# （不用 RenderingServer.frame_post_draw —— 无头模式它永远不触发，会把游戏卡死）
@@ -738,14 +760,23 @@ func export_replay_video() -> void:
 		img.convert(Image.FORMAT_RGB8)
 		if img.get_width() != 900 or img.get_height() != 560:
 			img.resize(900, 560, Image.INTERPOLATE_LANCZOS)
-		avi.add_image(img)
+		if to_gif:
+			gif.add_image(img)
+		else:
+			avi.add_image(img)
 		got += 1
-		export_btn.text = "导出中 %d%%" % int(float(i + 1) * 100.0 / float(total))
+		var pct := int(float(i + 1) * 100.0 / float(total))
+		if to_gif:
+			export_gif_btn.text = "GIF %d%%" % pct
+		else:
+			export_btn.text = "AVI %d%%" % pct
 		if (i + 1) % 2 == 0:
 			await get_tree().process_frame
 
-	export_btn.text = "导出视频"
+	export_btn.text = "导出 AVI"
+	export_gif_btn.text = "导出 GIF"
 	export_btn.disabled = false
+	export_gif_btn.disabled = false
 	overlay.visible = overlay_was
 	_bb_overlay.visible = overlay_was
 	menu_btn.visible = true
@@ -753,12 +784,24 @@ func export_replay_video() -> void:
 	replay_playing = false
 	world.replay_apply(replay_t)
 	video_exporting = false
-	if got == 0 or not avi.save_to(path):
-		show_toast("导出失败：%s" % ("画面抓不到" if got == 0 else avi.error))
+	var ok_write := false
+	var werr := ""
+	if got == 0:
+		werr = "画面抓不到"
+	elif to_gif:
+		ok_write = gif.finish()
+		werr = gif.error
+	else:
+		ok_write = avi.save_to(path)
+		werr = avi.error
+	if not ok_write:
+		if to_gif:
+			gif.finish()
+		show_toast("导出失败：%s" % werr)
 		return
 	var mb := float(FileAccess.get_file_as_bytes(path).size()) / 1048576.0
-	show_toast("已导出 %.1f 秒 / %d 帧 → %s（%.1f MB）" % [float(got) / float(VIDEO_FPS), got, path, mb])
-	OS.shell_open(out_dir)
+	# 不再自动弹资源管理器 —— 抢焦点那一下就是「卡一下」的来源
+	show_toast("已导出 %s（%.1f 秒 / %d 帧 / %.1f MB）→ %s" % [ext.to_upper(), float(got) / float(out_fps), got, mb, out_dir])
 
 func _replay_restart() -> void:
 	replay_t = 0.0

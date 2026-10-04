@@ -107,19 +107,49 @@ HUD 的位置也按原版摆回来：`跳跃 ●●` 和 `关卡 n / N` 在右�
 > 导致提示计时永远是 0、**弹出来就再也不消失**。现在补回来了，并且进出场共用同一条 Tween
 > （先 `kill()` 再建），避免淡入还没走完就被淡出接管。
 
-## 导出视频
+## 导出回放（GIF / AVI）
 
-复盘面板上的 **「导出视频」** 把当前这段回放逐帧渲染、编码成 **MJPEG 的 .avi**，
-默认落在系统的「视频」文件夹（没有就落桌面），导完自动打开所在文件夹。
+复盘面板上有两个导出按钮，默认落在系统「视频」文件夹（没有就落桌面）：
 
-- 30 fps、900×560、JPEG 质量 0.85，时长跟录像一致（最长 30 秒）
-- 录制期间自动隐藏所有面板（复盘面板、通关浮层、toast、提示条），视频里只有游戏画面 + HUD
-- 窗口被拉伸过也没关系：每帧按实际抓到的像素尺寸重新算裁切区域，把等比缩放留下的黑边裁掉再缩回 900×560
-- 按钮上会实时显示 `导出中 xx%`
+| 按钮 | 格式 | 说明 |
+|---|---|---|
+| **导出 GIF**（推荐） | GIF89a，450×280 @ 12fps | **不需要任何解码器**：浏览器、微信、QQ、Windows 照片、手机相册全能放，自带无限循环 |
+| 导出 AVI | MJPEG，900×560 @ 30fps | 体积小画质好，但要 VLC / 剪映 / ffmpeg 这类带 MJPEG 解码器的软件 —— **Windows 自带播放器打不开**，见下 |
 
-Godot 没有内置视频编码，所以这里是自己写的容器：`scripts/avi_writer.gd`
-—— AVI 就是个 RIFF 容器（`RIFF/AVI ` → `LIST hdrl` → `LIST movi` → `idx1`），
-帧数据直接用 `Image.save_jpg_to_buffer()` 出的 JPEG，拼起来就能得到 VLC / ffmpeg / 剪映都能直接打开的文件。
+### 为什么 AVI「播放不了」
+
+这不是文件坏了：MJPEG 的 AVI 是合法容器（Godot 自己的 Movie Maker 也写这个格式），
+而是 **Windows 根本没有 MJPEG 解码器**。实测用系统自带的媒体栈（WPF MediaPlayer，
+底层是 Media Foundation）打开导出的 avi，返回 HasVideo=False。
+
+所以又写了一个 GIF 导出：GIF 用的是每个系统都内置的解码，最稳。
+
+### GIF 实现
+
+scripts/gif_writer.gd，自己实现 GIF89a + LZW：
+
+- 调色板用 **3-2-3**（红 3 位 / 绿 2 位 / 蓝 3 位）—— 这个游戏画面偏蓝，
+  比均匀的 3-3-2 少一圈色带；再叠 4×4 Bayer 有序抖动，渐变就磨平了
+- 索引化是 O(1) 的位打包，不找最近色（GDScript 里快得多）
+
+> 三个被独立解码器抓出来的 bug（自己写的结构自检全都没发现，是拿 Pillow 解才暴露的）：
+> 1. **漏写 LZW 最小码长那个字节** —— 解码器会把子块长度当成码长，报 codec configuration error
+> 2. **码长增长时机错位** —— 解码器的字典永远比编码器慢一格，所以阈值要 +1（晚一格增长）。
+>    原来 16×16 能过、24×24 就报 broken data stream，正是字典涨到 512 那一档
+> 3. 抖动那行 var b := int(BAYER4[...]) 因为数组元素是无类型 Variant，直接解析报错，
+>    导致整个文件加载失败、导出静默不生效
+
+### 录制细节（两种格式共用）
+
+- 时长跟录像一致（最长 30 秒）；录制期间自动隐藏所有面板（复盘面板、通关浮层、toast、提示条），
+  视频里只有游戏画面 + HUD；导出按钮上实时显示进度
+- 窗口被拉伸过也没关系：每帧按**实际抓到的像素尺寸**重新算裁切区域，把等比缩放留下的黑边裁掉再缩放
+- **不会自动打开资源管理器**了 —— 那一下抢焦点就是「导出时卡一下」的来源，现在只弹一条带路径的提示
+
+### AVI 实现
+
+`scripts/avi_writer.gd`：AVI 就是个 RIFF 容器（`RIFF/AVI ` → `LIST hdrl` → `LIST movi` → `idx1`），
+帧数据直接用 `Image.save_jpg_to_buffer()` 出的 JPEG。
 
 > 踩到的坑：一开始用 `await RenderingServer.frame_post_draw` 等画面，
 > 结果无头模式下这个信号永远不触发，导出直接把游戏卡死。改成 `await process_frame` 两次
@@ -133,6 +163,7 @@ cd_godot/
 ├── scenes/main.tscn         主场景：Main(Node2D) + World(Node2D)
 ├── scripts/
 │   ├── avi_writer.gd        MJPEG-AVI 写入器（导出复盘视频用）
+│   ├── gif_writer.gd        GIF89a 写入器（自带 LZW + 抖动量化，导出回放动图用）
 │   ├── level_io.gd          关卡数据结构 / 归一化 / 存档（class_name LevelIO）
 │   ├── ui_theme.gd          界面主题：圆角 / 半透明蓝 / 发光 / 过渡动画（class_name UITheme）
 │   ├── world.gd             物理模拟 + 全部画面绘制（class_name World）
@@ -151,6 +182,8 @@ godot --headless --path . --script res://tests/replay_test.gd    # 复盘 + toas
                                                                  # （含死亡复盘、通关复盘、倍速、拖动、返回）
 godot --headless --path . --script res://tests/avi_test.gd       # AVI 写入器 11 项
                                                                  # （RIFF 结构、帧数、索引、JPEG 能解回来）
+godot --headless --path . --script res://tests/gif_test.gd       # GIF 写入器 9 项
+                                                                 # （文件头、尺寸、GCE 块数、trailer）
 ```
 
 物理：自由落体与终端速度、落地、跳跃高度（离散积分 156.25px）、尖刺致死、金币、
