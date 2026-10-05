@@ -162,9 +162,72 @@ func _initialize() -> void:
 	main.close_replay()
 	await process_frame
 
+	# ---------- 5. 死后用键盘重生（不用动鼠标）----------
+	print("")
+	print("=== 键盘重生 ===")
+
+	# 死一次
+	main.play_test(lv)
+	var dead1 := false
+	for i in 600:
+		main._process(1.0 / 120.0)
+		if main.replay_active:
+			dead1 = true
+			break
+	check("先死一次，复盘自动弹出", dead1, true)
+	main._input(_key(KEY_SPACE))
+	await process_frame
+	check("空格 → 关闭复盘", main.replay_active, false)
+	check("空格 → 游戏继续跑", main.playing, true)
+	check("空格 → 球已回出生点", absf(main.world.by - 160.0) < 4.0, true)
+
+	# 再死一次，这次用回车
+	var dead2 := false
+	for i in 600:
+		main._process(1.0 / 120.0)
+		if main.replay_active:
+			dead2 = true
+			break
+	check("第二次也自动弹出", dead2, true)
+	main._input(_key(KEY_ENTER))
+	await process_frame
+	check("回车 → 关闭复盘", main.replay_active, false)
+	check("回车 → 游戏继续跑", main.playing, true)
+
+	# 通关浮层上回车 = 点主按钮
+	overlay_fired = false
+	main.show_overlay("测试浮层", "内容", "确定", func(): overlay_fired = true)
+	await process_frame
+	main._input(_key(KEY_ENTER))
+	await process_frame
+	check("回车 → 触发浮层按钮", overlay_fired, true)
+	check("回车 → 浮层收起", main.overlay.visible, false)
+
+	# 平时空格还是跳跃键，不能被这段逻辑吃掉
+	main.play_test(lv)
+	main._process(1.0 / 120.0)
+	check("平时按回车不误触（没弹窗时）", main.replay_active, false)
+	check("平时仍处于游戏中", main.playing, true)
+
+	# 按着跳键关弹窗，不该在重生瞬间起跳
+	main.world.touch_jump = true
+	main.world.sync_jump_state()
+	check("按着跳时同步 _prev_jump", main.world._prev_jump, true)
+	main.world.touch_jump = false
+	main.world.sync_jump_state()
+	check("松开后 _prev_jump 复位", main.world._prev_jump, false)
+
 	print("")
 	print("失败 %d 项 ❌" % fails if fails > 0 else "复盘 / toast 自检全部通过 ✅")
 	quit()
+
+var overlay_fired := false
+
+func _key(code: int) -> InputEventKey:
+	var e := InputEventKey.new()
+	e.keycode = code
+	e.pressed = true
+	return e
 
 func check(name: String, got, want, tol := 0.0) -> void:
 	var ok := false

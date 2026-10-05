@@ -65,6 +65,11 @@ var hud_testing := false
 ## 触屏虚拟键状态（由 TouchUI 每帧写入）
 var touch_dir := 0
 var touch_jump := false
+
+## 把「当前跳键是否按着」同步给内部状态机。
+## 用场景：按空格关掉复盘弹窗时，这一下不该被当成一次起跳。
+func sync_jump_state() -> void:
+	_prev_jump = touch_jump or Input.is_key_pressed(KEY_SPACE) 		or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W)
 var hud_steps := 0
 
 # ---- 编辑器共享状态 ----

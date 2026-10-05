@@ -489,6 +489,7 @@ func hide_overlay() -> void:
 
 func _overlay_pressed() -> void:
 	overlay.visible = false
+	world.sync_jump_state()      # 回车/空格关浮层时同理
 	refresh_pause()
 	if ov_cb.is_valid():
 		ov_cb.call()
@@ -672,7 +673,7 @@ func open_replay(from_win := false) -> void:
 	replay_slider.min_value = 0.0
 	replay_slider.max_value = maxf(0.01, dur)
 	replay_slider.set_value_no_signal(0.0)
-	replay_info.text = "这条命 %.1f 秒　·　累计死亡 %d 次　·　可拖动回看" % [dur, deaths]
+	replay_info.text = "这条命 %.1f 秒　·　死亡 %d 次　·　空格 / 回车 = 重生" % [dur, deaths]
 	for s in replay_speed_btns:
 		UITheme.apply_toggle(replay_speed_btns[s], is_equal_approx(s, replay_speed))
 	replay_panel.visible = true
@@ -696,6 +697,7 @@ func close_replay() -> void:
 		ui_layer.move_child(overlay, ui_layer.get_child_count() - 1)
 	else:
 		world.reset_ball()
+	world.sync_jump_state()      # 正按着空格关掉弹窗的话，别让这一下变成起跳
 	refresh_pause()
 
 ## 导出目录：优先「视频」文件夹，退而求其次桌面，再不行就 user://
@@ -1052,6 +1054,13 @@ func _input(event: InputEvent) -> void:
 				editor.reopen()
 			else:
 				open_menu()
+		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
+			# 死了 / 通关了不用摸鼠标：空格或回车直接继续。
+			# 平时空格是跳跃，所以这里只在复盘弹窗或结算浮层开着的时候接管。
+			if replay_active:
+				close_replay()
+			elif overlay.visible:
+				_overlay_pressed()
 		KEY_R:
 			# 手动复盘：把刚才这一段倒回去看（死了是自动弹）
 			if replay_active:
