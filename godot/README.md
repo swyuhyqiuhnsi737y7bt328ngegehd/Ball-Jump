@@ -52,6 +52,45 @@
 > 「从编辑器来的」这件事交给 `main.testing` 记着，通关或 Esc 后 `editor.reopen()` 回去。
 > 回归测试见 `tests/testplay_test.gd`（21 项：试玩能跑、通关回编辑器、Esc 回编辑器、试玩中死亡弹复盘后还能继续）。
 
+## 手机上玩（触屏适配）
+
+游戏本身就是 900×560 的逻辑画布 + `canvas_items` 拉伸，所以任何分辨率 / 任何 DPI 都会等比缩放，
+触屏上直接加了一层虚拟按键：**左下 ◀ ▶，右下 跳**。
+
+![触屏按键](docs/preview-touch.png)
+
+- 有触摸屏自动出现；桌面上可以 `--touch` 启动，或菜单里点「触屏按键」手动开关
+- 只在**真正在玩**的时候出现：菜单 / 编辑器 / 通关浮层 / 复盘面板打开时会自动收起并把方向清零，
+  免得松手事件被吞掉导致球一直往一个方向跑
+- 编辑器本身不用改：Godot 默认 `emulate_mouse_from_touch`，单指就是鼠标，拖拽画关卡、点按钮都能用
+
+### 为什么不用 Button 做虚拟键
+
+Godot 默认只把**第一根手指**当成鼠标（`input_devices/pointing/emulate_mouse_from_touch`），
+第二根手指按「跳」时不会产生任何 GUI 事件 —— 而平台跳跃必须能「按住右 + 点跳」。
+所以 `scripts/touch_ui.gd` 直接收 `InputEventScreenTouch` / `InputEventScreenDrag`，
+按 `event.index` 逐根手指跟踪，每个键记录「被几根手指按着」，方向按左右计数相减。
+手指划出按钮就算松开。鼠标事件也一起收，方便桌面调试。
+
+自检见 `tests/touch_test.gd`：模拟两根手指分别按住「右」和「跳」，验证两个键同时生效、
+球真的往右跑并起跳、松开一根不影响另一根、划出按钮自动松开。
+
+### 导出到手机
+
+`project.godot` 里已经设成横屏（`window/handheld/orientation=0`），渲染器用 `gl_compatibility`，
+Android / iOS 的导出预设需要在 Godot 编辑器里装好对应 SDK 后自己加一个（本仓库只带了 Windows 预设）。
+
+## 内置示例关卡
+
+`levels/sample_levels.json` 里是 6 张手搓关卡（炫技之地刺海洋 / 自动关1 / 炫技之微操技法 /
+炫技之节奏狂魔 / 炫技之全程高压 / 炫技之极简关卡），和网页版是同一套 JSON 结构，可以互相导入。
+
+- **第一次运行**（还没有 `user://balljump_levels.json` 存档）时会直接拿它当关卡列表，
+  所以新克隆下来就有图可玩
+- 一旦有了自己的存档就以存档为准，不会覆盖你的关卡
+- ⚠️ 导出时必须让这个文件进包：`export_presets.cfg` 里 `include_filter="levels/*.json"`
+  （`.json` 不是 Godot 资源，默认不会被打进 pck；已经配好并验证过导出包里能找到它）
+
 ## 和网页版的兼容性
 
 关卡的 JSON 结构和 `cd.html` **完全一致**（字段名、取值范围、默认值、坐标上限都照搬），所以：

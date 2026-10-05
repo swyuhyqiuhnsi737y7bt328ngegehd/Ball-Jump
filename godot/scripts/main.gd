@@ -38,6 +38,9 @@ var ov_title: Label
 var ov_text: Label
 var ov_btn: Button
 var ov_replay_btn: Button
+# ---- 触屏 ----
+var touch_ui: TouchUI
+var touch_enabled := false
 var ov_cb: Callable = Callable()
 var toast: Label
 var toast_left := 0.0
@@ -116,7 +119,12 @@ func _ready() -> void:
 		_play_level(0)
 		await get_tree().create_timer(0.6).timeout
 		show_overlay("🎉 过关！", "示例关卡 · 跑一圈\n用时 12.34 秒　·　金币 3/5", "下一关", func(): pass)
-	elif OS.get_cmdline_args().has("--replay-demo") and not playlist.is_empty():
+	# 有触摸屏就自动开虚拟按键；桌面上可以 --touch 或菜单里手动开
+	# （这段必须独立于上面的 --play/--edit-level 链，别把 elif 抢走）
+	touch_enabled = DisplayServer.is_touchscreen_available() or OS.get_cmdline_args().has("--touch")
+	if touch_ui != null:
+		touch_ui.visible = false
+	if OS.get_cmdline_args().has("--replay-demo") and not playlist.is_empty():
 		_play_level(0)
 		await get_tree().create_timer(1.2).timeout
 		world.rec_snapshot_now()
@@ -234,6 +242,12 @@ func _build_ui() -> void:
 	ui_layer.add_child(toast)
 
 	# ---- 通关 / 结算浮层：整屏压暗 + 发光标题 + 胶囊按钮 ----
+	# ---- 触屏虚拟按键（放在浮层之前，保证浮层 still 在最上面）----
+	touch_ui = TouchUI.new()
+	touch_ui.name = "TouchUI"
+	touch_ui.visible = false
+	ui_layer.add_child(touch_ui)
+
 	_bb_overlay = BackBufferCopy.new()
 	_bb_overlay.copy_mode = BackBufferCopy.COPY_MODE_VIEWPORT
 	_bb_overlay.visible = false
@@ -333,6 +347,7 @@ func _build_ui() -> void:
 	mv.add_child(foot)
 	foot.add_child(_mk_button("导出全部", func(): _export_all()))
 	foot.add_child(_mk_button("导入全部", func(): _import_all()))
+	foot.add_child(_mk_button("触屏按键", func(): _toggle_touch()))
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	foot.add_child(spacer)
@@ -506,6 +521,8 @@ func open_menu() -> void:
 
 func close_menu() -> void:
 	set_menu_visible(false)
+	# ★ 少了这句，直接关菜单（没选关卡）之后 playing 一直是 false，球就再也不动了
+	refresh_pause()
 	menu_btn.visible = true
 	if not level.is_empty():
 		hint.visible = true
@@ -573,6 +590,14 @@ func _delete_level(i: int) -> void:
 	LevelIO.save_levels(playlist)
 	build_menu()
 	show_toast("已删除「%s」" % nm)
+
+## 手动开关触屏虚拟按键（桌面上也能试）
+func _toggle_touch() -> void:
+	touch_enabled = not touch_enabled
+	if touch_ui != null and not touch_enabled:
+		touch_ui.visible = false
+		touch_ui.reset()
+	show_toast("触屏按键：%s" % ("开" if touch_enabled else "关"))
 
 func _play_level(i: int) -> void:
 	if i < 0 or i >= playlist.size():
@@ -930,6 +955,16 @@ func _import_all() -> void:
 # ================================================================ 主循环
 
 func _process(delta: float) -> void:
+	# ---- 触屏虚拟键：只在真正玩的时候露出来，其它时候把状态清干净 ----
+	if touch_ui != null:
+		var want := touch_enabled and playing and not editor.is_open() 			and not menu_panel.visible and not overlay.visible and not json_panel.visible 			and not replay_active and not video_exporting
+		if touch_ui.visible != want:
+			touch_ui.visible = want
+			if not want:
+				touch_ui.reset()
+		world.touch_dir = touch_ui.dir
+		world.touch_jump = touch_ui.jump
+
 	world.hud_deaths = deaths
 	world.hud_level_index = level_index
 	world.hud_playlist_len = playlist.size()

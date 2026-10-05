@@ -35,6 +35,8 @@ const PORTAL_COLORS := [
 ]
 
 const SAVE_PATH := "user://balljump_levels.json"
+## 仓库自带的示例关卡（原作者手搓的 6 张图）。第一次运行、还没有存档时拿它当默认内容。
+const SAMPLE_PATH := "res://levels/sample_levels.json"
 
 # ---------------------------------------------------------------- 数值工具
 
@@ -162,10 +164,20 @@ static func clone_level(lv: Dictionary) -> Dictionary:
 # ---------------------------------------------------------------- 存档
 
 static func load_levels() -> Array:
-	var out: Array = []
+	# 没有存档（全新克隆 / 第一次运行）→ 直接用仓库里的示例关卡
 	if not FileAccess.file_exists(SAVE_PATH):
+		return load_sample_levels()
+	return _load_from(SAVE_PATH)
+
+## 读仓库自带的示例关卡
+static func load_sample_levels() -> Array:
+	return _load_from(SAMPLE_PATH)
+
+static func _load_from(path: String) -> Array:
+	var out: Array = []
+	if not FileAccess.file_exists(path):
 		return out
-	var f := FileAccess.open(SAVE_PATH, FileAccess.READ)
+	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		return out
 	var txt := f.get_as_text()

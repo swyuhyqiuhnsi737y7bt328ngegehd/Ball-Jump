@@ -62,6 +62,9 @@ var hud_playlist_len := 0
 var hud_frozen := false
 var hud_time_scale := 1.0
 var hud_testing := false
+## 触屏虚拟键状态（由 TouchUI 每帧写入）
+var touch_dir := 0
+var touch_jump := false
 var hud_steps := 0
 
 # ---- 编辑器共享状态 ----
@@ -226,13 +229,14 @@ func step(dt: float) -> void:
 	if jump_restore_fx > 0.0:
 		jump_restore_fx = maxf(0.0, jump_restore_fx - dt)
 
-	# ---- 读取按键 ----
-	var dir := 0
+	# ---- 读取输入：键盘 + 触屏虚拟键 ----
+	var dir := clampi(touch_dir, -1, 1)
 	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A):
 		dir -= 1
 	if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
 		dir += 1
-	var jump_now := Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W)
+	dir = clampi(dir, -1, 1)
+	var jump_now := touch_jump or Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W)
 	if jump_now and not _prev_jump:
 		jump_pressed = true
 	if _prev_jump and not jump_now and bvy < -260.0:
