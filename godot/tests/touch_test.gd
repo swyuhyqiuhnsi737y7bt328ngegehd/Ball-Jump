@@ -11,11 +11,12 @@ func _initialize() -> void:
 
 	print("=== 1. 仓库自带的示例关卡 ===")
 	var samples := LevelIO.load_sample_levels()
-	check("示例关卡读出来了", samples.size(), 6)
+	# 关卡会持续更新，所以只要求「至少有 6 张、每张都完整」，别把数量写死
+	check("示例关卡读出来了（>=6）", samples.size() >= 6, true)
 	var names := []
 	for l in samples:
 		names.append(str(l["name"]))
-	print("  " + " / ".join(names))
+	print("  共 %d 张: %s" % [samples.size(), " / ".join(names)])
 	var geo_ok := true
 	for l in samples:
 		if (l["spawn"] as Dictionary).is_empty() or (l["goal"] as Dictionary).is_empty():
