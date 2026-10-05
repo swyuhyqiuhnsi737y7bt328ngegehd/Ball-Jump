@@ -20,9 +20,6 @@ config/features=PackedStringArray("4.7", "GL Compatibility")
 window/size/viewport_width=900
 window/size/viewport_height=560
 window/stretch/mode="canvas_items"
-; 手机横屏；900x560 的逻辑画布会被等比缩放到整屏（stretch/mode=canvas_items + aspect=keep）
-window/handheld/orientation=0
-window/stretch/aspect="keep"
 
 [rendering]
 

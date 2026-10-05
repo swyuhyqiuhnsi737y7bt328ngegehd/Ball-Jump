@@ -43,6 +43,10 @@ var name_edit: LineEdit
 var dirty_lbl: Label
 var snap_btn: Button
 var tool_buttons := {}
+# ---- 面板显隐 ----
+var ui_hidden := false        # 专注编辑：工具栏 + 属性面板都收起来
+var panel_toggle: Button      # 工具栏里的「收起/展开面板」
+var restore_btn: Button       # 收起后右下角留的小胶囊，别让人找不回来
 
 func setup(m: Node, w: World) -> void:
 	main = m
@@ -62,6 +66,26 @@ func _mk_btn(text: String, cb: Callable) -> Button:
 	b.add_theme_font_size_override("font_size", 13)
 	b.pressed.connect(cb)
 	return b
+
+## 统一决定工具栏 / 属性面板的显隐。
+## 没选中任何物件时属性面板自动收起来（不然右上角一直盖着 250×340），
+## 专注模式（Tab）下两个都收起来，右下角留个小胶囊用来叫回来。
+func _sync_panels() -> void:
+	var show_bar: bool = opened and not ui_hidden
+	bar.visible = show_bar
+	props.visible = show_bar and selected != null
+	if restore_btn != null:
+		restore_btn.visible = opened and ui_hidden
+	if panel_toggle != null:
+		panel_toggle.text = "展开面板" if ui_hidden else "收起面板"
+
+func toggle_panels() -> void:
+	ui_hidden = not ui_hidden
+	_sync_panels()
+	if ui_hidden:
+		main.show_toast("面板已收起 · 按 Tab 或点右下角「面板」恢复")
+	else:
+		main.show_toast("面板已展开")
 
 func _build_bar() -> void:
 	bar = PanelContainer.new()
@@ -115,6 +139,9 @@ func _build_bar() -> void:
 	var sp2 := Control.new()
 	sp2.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h2.add_child(sp2)
+	panel_toggle = _mk_btn("收起面板", func(): toggle_panels())
+	panel_toggle.add_theme_font_size_override("font_size", 12)
+	h2.add_child(panel_toggle)
 	h2.add_child(_mk_btn("▶ 试玩", func(): test_play()))
 	h2.add_child(_mk_btn("保存", func(): save()))
 	h2.add_child(_mk_btn("{ } JSON", func(): main.open_json(edit_level)))
@@ -152,6 +179,16 @@ func _build_props() -> void:
 	props_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(props_body)
 
+	# 专注模式下仍然留一个能点的小胶囊，免得鼠标用户没法把面板叫回来
+	restore_btn = _mk_btn("▸ 面板", func(): toggle_panels())
+	restore_btn.add_theme_font_size_override("font_size", 12)
+	UITheme.apply_pill(restore_btn)
+	restore_btn.position = Vector2(794, 514)
+	restore_btn.custom_minimum_size = Vector2(96, 32)
+	restore_btn.size = Vector2(96, 32)
+	restore_btn.visible = false
+	main.ui_layer.add_child(restore_btn)
+
 # ================================================================ 进出编辑器
 
 func open_with(lv: Dictionary, index: int) -> void:
@@ -175,10 +212,11 @@ func enter() -> void:
 	main.hint.visible = false
 	main.menu_btn.visible = false
 	var bar_was_hidden := not bar.visible
-	bar.visible = true
-	props.visible = true
-	if bar_was_hidden:
+	ui_hidden = false
+	_sync_panels()
+	if bar_was_hidden and bar.visible:
 		UITheme.pop_in_free(bar, 0.22, 0.98, 16.0)
+	if bar_was_hidden and props.visible:
 		UITheme.pop_in_free(props, 0.22, 0.96, -12.0)
 	name_edit.text = str(edit_level["name"])
 	world.editor_mode = true
@@ -210,8 +248,7 @@ func force_close() -> void:
 func _exit_now() -> void:
 	main.hide_overlay()
 	opened = false
-	bar.visible = false
-	props.visible = false
+	_sync_panels()
 	world.editor_mode = false
 	drag = null
 	draft = null
@@ -225,12 +262,11 @@ func test_play() -> void:
 	#   试玩进去是暂停的、球根本不动，而且 Esc 会被 editor.exit() 抢走。
 	#   记住是从编辑器出来的这件事由 main.testing 负责，回来时 reopen() 即可。
 	opened = false
-	bar.visible = false
-	props.visible = false
+	selected = null
+	_sync_panels()
 	world.editor_mode = false
 	drag = null
 	draft = null
-	selected = null
 	main.play_test(edit_level.duplicate(true))
 	main.show_toast("试玩中，Esc 回到编辑器")
 
@@ -291,6 +327,9 @@ func over_ui(p: Vector2) -> bool:
 	if bar.visible and bar.get_global_rect().has_point(p):
 		return true
 	if props.visible and props.get_global_rect().has_point(p):
+		return true
+	# 专注模式下的小胶囊也算 UI，别在它底下画出平台来
+	if restore_btn != null and restore_btn.visible and restore_btn.get_global_rect().has_point(p):
 		return true
 	return false
 
@@ -531,6 +570,7 @@ func render_props() -> void:
 		tip.add_theme_constant_override("line_spacing", 4)
 		tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		props_body.add_child(tip)
+		_sync_panels()      # ★ 这里 return 之前也要同步，否则取消选中后面板不会收起来
 		return
 
 	var kind := str(selected["kind"])
@@ -543,6 +583,7 @@ func render_props() -> void:
 		props_body.add_child(_make_field(f, obj))
 	world.editor_selected = selected
 	world.queue_redraw()
+	_sync_panels()
 
 func _make_field(f: Dictionary, obj: Dictionary) -> Control:
 	var key := str(f["key"])

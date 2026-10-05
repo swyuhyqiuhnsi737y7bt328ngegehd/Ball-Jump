@@ -1061,6 +1061,11 @@ func _input(event: InputEvent) -> void:
 				close_replay()
 			elif overlay.visible:
 				_overlay_pressed()
+		KEY_TAB:
+			# 编辑器里按 Tab 收起/展开面板，方便看清整张图
+			if editor.is_open():
+				editor.toggle_panels()
+				get_viewport().set_input_as_handled()
 		KEY_R:
 			# 手动复盘：把刚才这一段倒回去看（死了是自动弹）
 			if replay_active:
